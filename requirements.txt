@@ -1,0 +1,9 @@
+streamlit
+torch
+transformers
+safetensors
+numpy
+pandas
+chat-downloader
+youtube-comment-downloader
+google-api-python-client
