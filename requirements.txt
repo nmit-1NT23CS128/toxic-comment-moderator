@@ -1,9 +1,8 @@
 streamlit
 torch
 transformers
-safetensors
 numpy
-pandas
-chat-downloader
-youtube-comment-downloader
+matplotlib
+scikit-learn
 google-api-python-client
+sentencepiece
