@@ -1,4 +1,4 @@
-%%writefile app.py
+
 import os, re, html, threading, queue, time, zlib
 from itertools import islice
 import numpy as np
