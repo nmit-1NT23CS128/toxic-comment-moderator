@@ -1,4 +1,3 @@
-
 import os, re, html, threading, queue, time, zlib
 from itertools import islice
 import numpy as np
@@ -165,6 +164,15 @@ align-items:center;padding:0 16px;font-size:.85rem;color:var(--mute);background:
 .empty .steps span{background:#fff;border:1px solid var(--line);border-radius:18px;padding:5px 14px;font-size:.82rem;color:var(--ink);}
 .empty p{max-width:420px;}
 .yt.hid{border:1px solid #f6d5d5;}.yt.rev{border:1px solid #f5e1bd;}
+
+/* ---- model performance ---- */
+.cm{display:grid;grid-template-columns:92px 1fr 1fr;gap:6px;max-width:560px;margin:10px 0 6px;}
+.cm .h{font-size:.78rem;color:var(--mute);display:flex;align-items:center;justify-content:center;text-align:center;font-weight:500;}
+.cm .c{border-radius:12px;padding:22px 10px;text-align:center;border:1px solid var(--line);}
+.cm .c b{display:block;font-size:1.6rem;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.cm .c span{font-size:.75rem;color:var(--mute);}
+.cm .good{background:color-mix(in srgb,var(--ok) calc(var(--a)*45%),#fff);}
+.cm .bad{background:color-mix(in srgb,var(--hide) calc(var(--a)*60%),#fff);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -225,11 +233,11 @@ st.markdown(f'<div class="ytbar"><div class="brand"><span class="play"></span><s
             f'<div class="right">'
             f'<span class="status {"on" if _live else ""}">{"● Moderating" if _live else "Idle"}</span>'
             f'<span class="me">C</span></div></div>', unsafe_allow_html=True)
-page = chip_row(["Comments", "Review queue", "Check a comment"], "page", "nav")
+page = chip_row(["Comments", "Review queue", "Check a comment", "Model performance"], "page", "nav")
 
 st.sidebar.markdown("### Filter strictness")
 st.sidebar.caption("Above the first slider a comment is hidden. Above the second it waits for your review. Build v6")
-hide_t = st.sidebar.slider("Hide automatically above", 0.50, 0.99, 0.75, 0.01)
+hide_t = st.sidebar.slider("Hide automatically above", 0.50, 0.99, 0.82, 0.01)
 review_t = st.sidebar.slider("Send to review above", 0.05, hide_t - 0.01, min(0.35, hide_t - 0.01), 0.01)
 
 def decide(p):
@@ -323,6 +331,70 @@ elif page == "Check a comment":
         if label != "Published":
             n = enqueue([{"comment": text, "score": p, "source": "manual"}])
             st.caption("Added to the review queue." if n else "Already in the review queue.")
+
+# ---------- Model performance ----------
+elif page == "Model performance":
+    page_head("Model performance",
+              "Results on 30,000 held-out test comments. The threshold was tuned on the validation set.")
+
+    # Confusion matrix at the tuned threshold (rows = actual, cols = predicted)
+    TN, FP, FN, TP = 25432, 426, 718, 3424
+    N = TN + FP + FN + TP
+    acc  = (TP + TN) / N
+    prec = TP / (TP + FP)
+    rec  = TP / (TP + FN)
+    f1   = 2 * prec * rec / (prec + rec)
+
+    # Results at the default 0.5 threshold, for comparison
+    base = {"Accuracy": 0.9587, "Precision": 0.8432, "Recall": 0.8607, "F1 score": 0.8519}
+
+    st.markdown("##### Test metrics at the tuned threshold (0.82)")
+    m = st.columns(4)
+    for col, (name, val) in zip(m, [("Accuracy", acc), ("Precision", prec), ("Recall", rec), ("F1 score", f1)]):
+        col.metric(name, f"{val:.4f}", delta=f"{val - base[name]:+.4f} vs 0.5", delta_color="normal")
+    st.caption("Best threshold on the validation set: 0.82 (validation F1 = 0.8676). "
+               "The test set was not used to pick the threshold.")
+
+    left_p, right_p = st.columns([1, 1], gap="large")
+
+    with left_p:
+        st.markdown("##### Confusion matrix")
+        tot_neg, tot_pos = TN + FP, FN + TP
+        def cell(v, row_total, good):
+            a = v / row_total
+            return (f'<div class="c {"good" if good else "bad"}" style="--a:{a:.2f}">'
+                    f'<b>{v:,}</b><span>{a*100:.1f}% of actual</span></div>')
+        st.markdown(
+            '<div class="cm">'
+            '<div></div><div class="h">Predicted<br>non-toxic</div><div class="h">Predicted<br>toxic</div>'
+            '<div class="h">Actual<br>non-toxic</div>' + cell(TN, tot_neg, True) + cell(FP, tot_neg, False) +
+            '<div class="h">Actual<br>toxic</div>' + cell(FN, tot_pos, False) + cell(TP, tot_pos, True) +
+            '</div>', unsafe_allow_html=True)
+        st.caption(f"{FP:,} clean comments wrongly flagged (false positives) · "
+                   f"{FN:,} toxic comments missed (false negatives).")
+
+    with right_p:
+        st.markdown("##### Default (0.5) vs tuned (0.82)")
+        cmp = pd.DataFrame({
+            "Metric": list(base.keys()),
+            "Threshold 0.50": list(base.values()),
+            "Threshold 0.82": [round(acc, 4), round(prec, 4), round(rec, 4), round(f1, 4)],
+        })
+        st.dataframe(cmp, hide_index=True, use_container_width=True)
+        st.caption("Raising the threshold trades some recall for fewer false alarms: "
+                   "precision goes up, recall goes down, and F1 improves slightly.")
+
+    st.markdown("##### Detailed report at the tuned threshold")
+    report = pd.DataFrame(
+        [["non-toxic", 0.9725, 0.9835, 0.9780, 25858],
+         ["toxic",     0.8894, 0.8267, 0.8569, 4142],
+         ["accuracy",  None,   None,   0.9619, 30000],
+         ["macro avg", 0.9309, 0.9051, 0.9174, 30000],
+         ["weighted avg", 0.9611, 0.9619, 0.9613, 30000]],
+        columns=["Class", "Precision", "Recall", "F1", "Support"])
+    st.dataframe(report, hide_index=True, use_container_width=True)
+    st.caption("About 14% of the test set is toxic, so accuracy alone looks flattering. "
+               "Precision, recall and F1 on the toxic class are the numbers to watch.")
 
 # ---------- Live stream page ----------
 elif page == "Comments":
